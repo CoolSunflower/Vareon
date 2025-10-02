@@ -1,4 +1,5 @@
 import sys
+from pydantic import BaseModel
 import modal
 
 vareon_evo2_image = (
@@ -83,7 +84,31 @@ def analyseVariant(model, sequence, reference, alternative, relativePositon):
 
     deltaScore = variantScore - referenceScore
 
-    
+    # Confidence Parameters:  {'threshold': -0.0009178519, 'lof_std': 0.0015140239, 'func_std': 0.0009016589} calculated over 500 BRCA SNV's
+    threshold = -0.0009178519
+    lofStd = 0.0015140239
+    funcStd = 0.0009016589
+
+    if deltaScore < threshold:
+        prediction = 'Likely Pathogenic'
+        confidence = min(abs(deltaScore-threshold)/lofStd, 1.0)
+    else:
+        prediction = 'Likely Benign'
+        confidence = min(abs(deltaScore-threshold)/funcStd, 1.0)
+
+    return {
+        "reference": reference,
+        "alternative": alternative,
+        "delta_score": float(deltaScore),
+        "prediction": prediction,
+        "classification_confidence": float(confidence)
+    }
+
+class VariantRequest(BaseModel):
+    variant_position: int
+    alternative: str
+    genome: str
+    chromosome: str
 
 @app.cls(gpu = "H100", volumes = {mount_path: volume}, max_containers = 3, retries = 2, scaledown_window = 60)
 class Evo2Model:
@@ -91,11 +116,17 @@ class Evo2Model:
     def loadEvo2Model(self):
         from evo2 import Evo2
         print("Loading Evo2 model...")
-        model = Evo2('evo2_7b')
+        self.model = Evo2('evo2_7b')
         print("Evo2 model loaded")
 
-    @modal.method()
-    def analyseSingleMutation(self, genome: str, chromosome: str, variantPosition: int, alternative: str):
+    # @modal.method()
+    @modal.fastapi_endpoint(method="POST")
+    def analyseSingleMutation(self, request: VariantRequest):
+        genome = request.genome
+        chromosome = request.chromosome
+        variantPosition = request.variant_position
+        alternative = request.alternative
+
         WINDOW_SIZE = 8192
         print("Genome: ", genome)
         print("Chromosome: ", chromosome)
@@ -112,7 +143,22 @@ class Evo2Model:
         reference = sequence[relativePosition]
         print("Reference is: ", reference)
 
+        # Analyse Variant
+        result = analyseVariant(model = self.model, sequence = sequence, reference = reference, alternative = alternative, relativePositon = relativePosition)
+        result["position"] = variantPosition
+
+        return result
+
 @app.local_entrypoint()
 def main():
+    # Example of how you'd call the deployed Modal Function from your client
+    import requests
+
     evo2Model = Evo2Model()
-    evo2Model.analyseSingleMutation.remote(genome = "hg38", alternative = "G", variantPosition = 43119628, chromosome = "chr17")
+    url = evo2Model.analyseSingleMutation.web_url
+
+    response = requests.post(url, json={"variant_position": 43119628, "alternative": "G", "genome": "hg38", "chromosome": "chr17"}, headers={"Content-Type": "application/json"})
+    response.raise_for_status()
+
+    result = response.json()
+    print(result)

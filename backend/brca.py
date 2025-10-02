@@ -59,7 +59,7 @@ def run_brca1_analysis():
     import pandas as pd
     import os
     import seaborn as sns
-    from sklearn.metrics import roc_auc_score
+    from sklearn.metrics import roc_auc_score, roc_curve
 
     from evo2 import Evo2
     WINDOW_SIZE = 8192
@@ -102,7 +102,7 @@ def run_brca1_analysis():
     ref_seq_indexes = []
     var_seqs = []
 
-    brca1_subset = brca1_df.iloc[:100].copy()
+    brca1_subset = brca1_df.iloc[:500].copy()
 
     for _, row in brca1_subset.iterrows():
         pos = row['pos']
@@ -146,8 +146,28 @@ def run_brca1_analysis():
     brca1_subset[f'evo2_delta_score'] = delta_scores
 
     # Finding Classification Threshold
-    # To find classification threshold, we will use ROC curve and find the threshold for which we have the highest Youden score (TPR - FPR)
+    # To find classification threshold, we will use ROC curve and find the threshold as the Youden J Index
+    # Since delta score --> more negative is harmful and negative towards 0 or positive is functionally fine, therefore, we will negate delta score to directly coorespond to pathogenicity.
 
+    # Youden's J index will be calculated by maximimg TPR - FPR in ROC of -delta_scores
+    yTrue = (brca1_subset['class'] == 'LOF')
+    fpr, tpr, thresholds = roc_curve(yTrue, -brca1_subset['evo2_delta_score'])
+    optimalIdx = (tpr - fpr).argmax()
+    optimalThreshold = -thresholds[optimalIdx]
+
+    # We will also calculate standard deviation of delta scores around the threshold, this will help us in defining the model confidence of the predictions made
+    # i.e. we will use (deltaScore-threshold)/(standardDeviation of predicted class) as direct coorelation to confidence of model prediction
+    lofScores = brca1_subset.loc[brca1_subset['class'] == "LOF", "evo2_delta_score"]
+    funcScores = brca1_subset.loc[brca1_subset['class'] == "FUNC/INT", "evo2_delta_score"]
+    lofStd = lofScores.std()
+    funcStd = funcScores.std()
+
+    confidenceParams = {
+        "threshold": optimalThreshold,
+        "lof_std": lofStd,
+        "func_std": funcStd,
+    }
+    print("Confidence Parameters: ", confidenceParams)
 
     # Calculate AUROC of zero-shot predictions
     y_true = (brca1_subset['class'] == 'LOF')

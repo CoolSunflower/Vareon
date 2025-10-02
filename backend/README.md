@@ -150,6 +150,8 @@ This example:
 ```python
 from main import Evo2Model
 
+# Change analyseSingleVariant from modal.fastapi_endpoint to modal.method
+
 @app.local_entrypoint()
 def main():
     model = Evo2Model()
