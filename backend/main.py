@@ -110,7 +110,7 @@ class VariantRequest(BaseModel):
     genome: str
     chromosome: str
 
-@app.cls(gpu = "H100", volumes = {mount_path: volume}, max_containers = 3, retries = 2, scaledown_window = 60)
+@app.cls(gpu = "H100", volumes = {mount_path: volume}, max_containers = 3, retries = 2, scaledown_window = 120)
 class Evo2Model:
     @modal.enter()
     def loadEvo2Model(self):
@@ -122,17 +122,13 @@ class Evo2Model:
     # @modal.method()
     @modal.fastapi_endpoint(method="POST")
     def analyseSingleMutation(self, request: VariantRequest):
+        print("Request: ", request)
         genome = request.genome
         chromosome = request.chromosome
         variantPosition = request.variant_position
         alternative = request.alternative
 
         WINDOW_SIZE = 8192
-        print("Genome: ", genome)
-        print("Chromosome: ", chromosome)
-        print("Variant Position: ", variantPosition)
-        print("Variant Alternative: ", alternative)
-
         sequence, sequenceStart = getGenomeSequence(genome = genome, chromosome = chromosome, position = variantPosition, windowSize = WINDOW_SIZE)
         print(f"Fetched genome sequence window at {sequenceStart}, first 100 bases: {sequence[:100]}")
 
