@@ -18,6 +18,24 @@ export interface GeneFromSearch {
     gene_id: string;
 }
 
+export interface GeneDetailsFromSearch {  
+    genomicInfo?: {
+        chrStart: number;
+        chrStop: number;
+        strand?: string;
+    }[];
+    organism?: {
+        scientificName: string;
+        commonName: string;
+    }
+    summary?: string;
+}
+
+export interface GeneBounds {
+    max: number;
+    min: number;
+}
+
 export async function getAvailableGenomes() {
     const apiUrl = "https://api.genome.ucsc.edu/list/ucscGenomes";
 
@@ -130,4 +148,73 @@ export async function searchGenes(query: string, genome: string){
     }
 
     return { query, genome, results };
+}
+
+export async function fetchGeneDetails(geneId: string): Promise<{geneDetails: GeneDetailsFromSearch | null; geneBounds: GeneBounds | null; initialRange: { start: number; end: number } | null;}> {
+  try {
+    const detailUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&id=${geneId}&retmode=json`;
+    const detailsResponse = await fetch(detailUrl);
+
+    if (!detailsResponse.ok) {
+      console.error(
+        `NCBI API Error: Failed to fetch gene details: ${detailsResponse.statusText}`,
+      );
+      return { geneDetails: null, geneBounds: null, initialRange: null };
+    }
+
+    const detailData = await detailsResponse.json();
+
+    if (detailData.result && detailData.result[geneId]) {
+      const detail = detailData.result[geneId];
+
+      if (detail.genomicinfo && detail.genomicinfo.length > 0) {
+        const info = detail.genomicinfo[0];
+
+        const minPos = Math.min(info.chrstart, info.chrstop);
+        const maxPos = Math.max(info.chrstart, info.chrstop);
+        const bounds = { min: minPos, max: maxPos };
+
+        // initialRange is set to show up to 10,000 bases of the gene, starting from the gene's start position
+        const geneSize = maxPos - minPos;
+        const seqStart = minPos;
+        const seqEnd = geneSize > 10000 ? minPos + 10000 : maxPos;
+        const range = { start: seqStart, end: seqEnd };
+
+        return { geneDetails: detail, geneBounds: bounds, initialRange: range };
+      }
+    }
+
+    return { geneDetails: null, geneBounds: null, initialRange: null };
+  } catch (err) {
+    return { geneDetails: null, geneBounds: null, initialRange: null };
+  }
+}
+
+export async function fetchGeneSequence(chrom: string, start: number, end: number, genomeId: string,): Promise<{sequence: string; actualRange: { start: number; end: number }; error?: string;}> {
+  try {
+    const chromosome = chrom.startsWith("chr") ? chrom : `chr${chrom}`;
+
+    const apiStart = start - 1;
+    const apiEnd = end;
+
+    const apiUrl = `https://api.genome.ucsc.edu/getData/sequence?genome=${genomeId};chrom=${chromosome};start=${apiStart};end=${apiEnd}`;
+    const response = await fetch(apiUrl);
+    const data = await response.json();
+
+    const actualRange = { start, end };
+
+    if (data.error || !data.dna) {
+      return { sequence: "", actualRange, error: data.error };
+    }
+
+    const sequence = data.dna.toUpperCase();
+
+    return { sequence, actualRange };
+  } catch (err) {
+    return {
+      sequence: "",
+      actualRange: { start, end },
+      error: "Internal error in fetch gene sequence",
+    };
+  }
 }
